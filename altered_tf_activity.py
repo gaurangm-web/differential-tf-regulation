@@ -6,7 +6,7 @@ Created by Gaurang Mahajan on June 21 2021.
 import streamlit as st
 import numpy as np
 import seaborn as sns
-import matplotlib
+import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import pandas as pd
 from collections import Counter,OrderedDict
@@ -47,11 +47,20 @@ def combined_pval(tfsol,allgenes,siggenes,trn):
 
 with st.sidebar:
     
-    whichdata = st.radio("Run tool for:",["Example","User input"])
+    whichdata = st.radio("Run tool for:",("Example","User input"))
 
-    st.header("File uploads")
-    gex_file = st.file_uploader("1. Upload tab-delimited diff. gene expression data (Format: 'Gene -> DGE status (0/1)', one per line)",type=['txt'])
-    net_file = st.file_uploader("2. Upload tab-delimited network file (Format: 'TF -> gene', one per line)",type=['txt'])
+    if whichdata=='User input':
+        st.header("File uploads")
+        gex_file = st.file_uploader("1. Upload tab-delimited diff. gene expression data (Format: 'Gene -> DGE status (0/1)', one per line)",type=['txt'])
+        net_file = st.file_uploader("2. Upload tab-delimited regulatory network file (Format: 'TF -> gene', one per line)",type=['txt'])
+        if gex_file is not None: geneexp_file = gex_file.name
+        if net_file is not None: network_file = net_file.name
+        
+    if whichdata=='Example':
+        st.markdown('Run on example (*E. coli*, microarray expression data for [pH 8.7 vs. pH 7](https://doi.org/10.1128/jb.187.1.304-319.2005),[RegulonDB 8.6](https://doi.org/10.1093/nar/gky1077))')
+        network_file = r'./RegulonDB_pairs.txt'
+        geneexp_file = r'./ph8p7_degenes_fdr1e-3_fc2.txt'
+    
     st.header("Input parameters")
     with st.form(key="grid_reset"):
         n_cutoff = st.slider("Cutoff on TF network degree", 2, 20)
@@ -60,28 +69,13 @@ with st.sidebar:
         submit_status = st.form_submit_button(label="Score TFs on input dataset")
     
     with st.beta_expander("About this app"):
-        st.markdown("Computes differential TF activity, given a user-specified list of gene expression changes and \
-        precompiled TF-gene regulatory network (implements the approach proposed in \
+        st.markdown("Computes differentially active regulators (trans factors/TF), given a user-specified 'large' list of gene expression changes between 2 conditions\
+        and a precompiled TF-gene regulatory network (implements the approach proposed in \
         [Mahajan & Mande, 2015](https://doi.org/10.1371/journal.pone.0142147))")
 
 with st.beta_container():
-    st.header("**TF scores on input DEG dataset**")
-
-    if gex_file is not None:
-        file_details = {"FileName":gex_file.name,"FileType":gex_file.type,"FileSize":gex_file.size}
-        #st.write("Gene expression changes:",gex_file.name)
-        geneexp_file = gex_file.name
-    if net_file is not None:
-        file_details = {"FileName":net_file.name,"FileType":net_file.type,"FileSize":net_file.size}
-        #st.write("Regulatory network:",net_file.name)
-        network_file = net_file.name
-
-if whichdata=='Example':
-    network_file = r'./RegulonDB_pairs.txt'
-    geneexp_file = r'./ph8p7_degenes_fdr1e-3_fc2.txt'
-    #st.write("Gene expression changes:",geneexp_file)
-    #st.write("Regulatory network:",network_file)
-
+    st.header("**TF scores on loaded DGE data**")
+   
 e1=0
 e2=0
 
@@ -100,8 +94,8 @@ if submit_status:
 
     regs = [r for r in g.nodes() if g.out_degree(r) >= n_cutoff]
     with st.beta_container(): 
-        st.write('Pre-compiled regulatory network has',g.number_of_nodes(),'genes,',\
-          g.number_of_edges(),'directed links, and',len(regs),'TFs')
+        st.write('Pre-compiled regulatory network comprises',g.number_of_nodes(),'genes,',\
+          g.number_of_edges(),'directed links, and',len(regs),'TFs with out-degree >',n_cutoff)
     ####################################
 
     ####################################
@@ -123,7 +117,7 @@ if submit_status:
     tflist = [tf for tf in regs if len(np.intersect1d(siggenes,targets(tf,g)))>0]
     with st.beta_container():
         st.write(len(siggenes),'genes out of a total of', len(allgenes),'are labeled as significantly diff. expressed (DEG).')
-        st.write(len(tflist),'TFs have non-zero overlap with DEGs.')
+        st.write(len(tflist),'TFs have non-zero overlap with the DEG set.')
     ####################################
 
     if e1!=0 or e2!=0 or len(tflist)==0:
@@ -141,8 +135,8 @@ if submit_status:
            o,p = stats.fisher_exact([[a,b],[c,d]],alternative='greater')
            sigtfs[tf] = np.min([1,p*len(tflist)])
         with st.beta_container(): 
-            st.write(len([tf for tf in sigtfs if sigtfs[tf] < 10**(-p_cutoff)]),\
-            'TFs are individually associated with DEGs at p (adjusted)<',10**(-p_cutoff),'level:')
+            st.write((len([tf for tf in sigtfs if sigtfs[tf] < 10**(-p_cutoff)])),\
+            ' TFs are individually associated with DEGs at p(adj)<',10**(-p_cutoff),'significance level:')
             
         df1 = pd.DataFrame(sorted([[tf,len(targets(tf,g)),len(np.intersect1d(siggenes,targets(tf,g))),sigtfs[tf]] for tf in sigtfs \
         if sigtfs[tf] < 10**(-p_cutoff)],key=itemgetter(-1)),\
@@ -151,7 +145,7 @@ if submit_status:
         ####################################
 
         with st.beta_container(): 
-            st.write(""" TF subnetwork output: """)
+            st.markdown("**TF subnetwork output**<sup>a</sup>:",unsafe_allow_html=True)
             
         ####################################
         tfset=tflist[:]
@@ -176,11 +170,71 @@ if submit_status:
                     old_pval = p
                     tfsol_old = tfsol_new[:]
                     tfset_rem = [r for r in tfset_rem[:] if r!=tf]
-        tfsol_approx = tfsol_old[:]
-        pval = combined_pval(tfsol_approx,allgenes,siggenes,g)
+        tfsol_opt = tfsol_old[:]
+        pval_opt = combined_pval(tfsol_opt,allgenes,siggenes,g)
         
-        df2 = pd.DataFrame(sorted([[tf,len(targets(tf,g)),len(np.intersect1d(siggenes,targets(tf,g))),sigtfs[tf]] for tf in tfsol_approx],\
+        df2 = pd.DataFrame(sorted([[tf,len(targets(tf,g)),len(np.intersect1d(siggenes,targets(tf,g))),sigtfs[tf]] for tf in tfsol_opt],\
         key=itemgetter(-1)),columns=['TF','Total # of targets','# DEG targets','Indiv. p-val\n(FET; adjusted)'])
         with st.beta_container(): 
-            st.write('Optimal aggregated p-value (log10) =',round(pval,1))
+            st.write('Optimal aggregated p-value (log10) =',round(pval_opt,1))
             df2
+            
+        with st.beta_container(): 
+            st.markdown('**Bkg ('"-ve control"') distribution of min. p-values**<sup>b</sup>:',unsafe_allow_html=True)           
+        pval_dist = []
+        tfscore = {tf:0 for tf in regs}
+        Nmax = 20
+        for n in range(Nmax):
+        
+            siggenes_rnd=list(np.random.choice(allgenes,len(siggenes)))
+            tflist = [tf for tf in regs if len(np.intersect1d(siggenes_rnd,targets(tf,g)))>0]
+        
+            tfset=tflist[:]
+            tf = find_best_tf(tfset,allgenes,siggenes_rnd,g)
+            tfsol_old=[tf]
+            tfset.remove(tf)
+            tfset_rem=tfset[:]
+            old_pval=combined_pval(tfsol_old,allgenes,siggenes_rnd,g)
+            if len(tfset)>0:
+                while len(tfset_rem[:])>0: 
+                    tflist=[]
+                    for tf in tfset_rem:
+                        tfsol_temp = tfsol_old[:]
+                        tfsol_temp.append(tf)
+                        tflist.append((tf,combined_pval(tfsol_temp,allgenes,siggenes_rnd,g)))
+                    (tf,p)=sorted(tflist,key=itemgetter(1))[0]
+                    if p >= old_pval:
+                        break
+                    else:  
+                        tfsol_new=tfsol_old[:]
+                        tfsol_new.append(tf)
+                        old_pval = p
+                        tfsol_old = tfsol_new[:]
+                        tfset_rem = [r for r in tfset_rem[:] if r!=tf]
+            tfsol_approx_rnd = tfsol_old[:]
+            pval_rnd = combined_pval(tfsol_approx_rnd,allgenes,siggenes_rnd,g)
+            pval_dist.append(pval_rnd)
+            for tf in tfsol_approx_rnd: tfscore[tf] +=1
+         
+        df3 = sorted([(tf,100*tfscore[tf]/float(Nmax)) for tf in tfsol_opt],key=itemgetter(-1),reverse=True)
+        st.write(str(Nmax),' randomizations of DEG set; z-score of obtained TF subnet = ',round((pval_opt - np.mean(pval_dist))/np.std(pval_dist),1))
+        
+        fig = plt.figure(figsize=(6,2))
+        
+        ax = fig.add_subplot(131)
+        plt.axvline(pval_opt,color='gray',linestyle='--')
+        ax.hist(pval_dist,bins=10,alpha=0.7)
+        ax.set_xlabel('Log10 (p-val)')
+        ax.set_ylabel('Frequency')
+        ax = fig.add_subplot(133)
+        ax.barh(range(1,1+len(tfsol_opt)),[s for t,s in df3],height=0.3,align='center')
+        ax.set_yticks(range(1,1+len(tfsol_opt)))
+        ax.set_yticklabels([t for t,s in df3])
+        ax.invert_yaxis()  # labels read top-to-bottom
+        ax.set_xlabel('Occurrence % in rand trials')
+        ax.set_xlim([0,100])
+        
+        st.pyplot(fig)
+        
+st.markdown("***")
+st.markdown("Notes:\<sup>a</sup>: Greedy bottom-up search is used to ",unsafe_allow_html=True)
